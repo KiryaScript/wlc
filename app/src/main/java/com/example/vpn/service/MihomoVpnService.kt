@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import android.content.pm.ServiceInfo
 import com.example.MainActivity
 import com.example.vpn.core.MihomoCore
 import kotlinx.coroutines.*
@@ -64,6 +66,7 @@ class MihomoVpnService : VpnService() {
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var vpnInputStream: java.io.FileInputStream? = null
     private var job: Job? = null
     private var tunnelReadJob: Job? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -99,22 +102,28 @@ class MihomoVpnService : VpnService() {
 
         job = serviceScope.launch {
             try {
-                // 1. Инициализируем и запускаем ядро Mihomo
-                Log.d(TAG, "Starting Mihomo Core...")
-                MihomoCore.start(configContent, filesDir)
-
-                // Сделаем небольшую паузу для симуляции прогресса
-                delay(800)
-
-                // 2. Поднимаем системный TUN-интерфейс
+                // 1. Поднимаем системный TUN-интерфейс ПЕРЕД запуском ядра
+                // (обычно ядру нужен готовый FD интерфейса, либо ядро подхватит его само)
                 Log.d(TAG, "Establishing TUN interface...")
                 establishTunnel()
 
                 val pfd = vpnInterface
-                if (pfd != null) {
-                    startTunnelReadLoop(pfd)
+                if (pfd == null) {
+                    throw Exception("VPN Builder established null TUN interface. Check permissions.")
                 }
 
+                // 2. Инициализируем и запускаем ядро Mihomo
+                Log.d(TAG, "Starting Mihomo Core with TUN FD: ${pfd.fd}...")
+                // Инжектируем fd в секцию tun (для подхвата интерфейса ядром без root)
+                val finalConfig = configContent.replace(
+                    "tun:",
+                    "tun:\n  fd: ${pfd.fd}"
+                )
+                MihomoCore.start(finalConfig, filesDir)
+
+                startTunnelReadLoop(pfd)
+
+                // Стейт в UI обновляется ТОЛЬКО после успешного старта ядра и туннеля
                 _vpnStatus.value = ConnectionStatus.CONNECTED
                 showNotification("Защищено в сети Mihomo VPN")
                 Log.d(TAG, "VPN Connected successfully.")
@@ -127,7 +136,7 @@ class MihomoVpnService : VpnService() {
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
-                cleanup()
+                disconnectVpn()
             }
         }
     }
@@ -145,12 +154,13 @@ class MihomoVpnService : VpnService() {
 
     private fun cleanup() {
         Log.d(TAG, "Stopping VPN and closing tunnel...")
+        try { vpnInputStream?.close() } catch(e: Exception){}
         tunnelReadJob?.cancel()
         tunnelReadJob = null
         MihomoCore.stop()
         closeTunnel()
         _vpnStatus.value = ConnectionStatus.DISCONNECTED
-        stopForeground(true)
+        try { stopForeground(true) } catch(e: Exception){}
         stopSelf()
     }
 
@@ -158,23 +168,26 @@ class MihomoVpnService : VpnService() {
         tunnelReadJob?.cancel()
         tunnelReadJob = serviceScope.launch(Dispatchers.IO) {
             val inputStream = java.io.FileInputStream(pfd.fileDescriptor)
+            vpnInputStream = inputStream
             val buffer = ByteArray(32767)
             try {
                 while (isActive) {
                     val length = inputStream.read(buffer)
                     if (length <= 0) {
-                        delay(100)
+                        delay(10)
                         continue
                     }
-                    // Draining read buffer successfully, ensuring OS IP sockets don't clog
+                    // Вакуумируем трафик в никуда
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "Tunnel read finished, closed, or cancelled: ${e.message}")
             } finally {
-                try {
-                    inputStream.close()
-                } catch (e: Exception) {
-                    // ignore
+                withContext(NonCancellable) {
+                    try {
+                        inputStream.close()
+                    } catch (e: Exception) {
+                        // ignore
+                    }
                 }
             }
         }
@@ -182,37 +195,50 @@ class MihomoVpnService : VpnService() {
 
     private fun establishTunnel() {
         try {
-            // Создаем билдер системного VPN интерфейса
             val builder = Builder()
 
-            // 1. Задаем сетевые параметры (fake-ip от ядра, либо дефолтный пул)
-            builder.addAddress("198.18.0.1", 16) // fake-ip подсеть Clash.Meta
-            builder.addRoute("0.0.0.0", 0)       // Перехватываем весь исходящий трафик IPv4
+            // 1. Задаем сетевые параметры IPv4 и IPv6 (fake-ip подсеть)
+            builder.addAddress("198.18.0.1", 16)
+            builder.addAddress("fdfe:dcba:9876::1", 126)
 
-            // 2. Указываем системный DNS сервер (запросы будут уходить в DNS-Hierarchy ядра Mihomo)
-            builder.addDnsServer("127.0.0.1")
+            // Перехватываем весь исходящий трафик (IPv4 + IPv6)
+            builder.addRoute("0.0.0.0", 0)
+            builder.addRoute("::", 0)
 
-            // 3. Дополнительные опции
-            builder.setMtu(1400)
+            // 2. Указываем системные DNS серверы (шлюз)
+            builder.addDnsServer("1.1.1.1")
+            builder.addDnsServer("8.8.8.8")
+
+            // 3. Оптимальный MTU и настройки
+            builder.setMtu(9000)
             builder.setSession("Mihomo Core Tunnel")
-            builder.setBlocking(false)
+            builder.setBlocking(true)
 
-            // Разрешаем системный обход для самого приложения, чтобы не образовалось бесконечного цикла
+            // 4. Позволяем приложению обходить собственный VPN для избежания петель
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                builder.addDisallowedApplication(packageName)
+                try {
+                    builder.addDisallowedApplication(packageName)
+                } catch (e: Exception) {
+                    Log.d(TAG, "Cannot restrict own package: ${e.message}")
+                }
             }
 
-            // 4. Компилируем и регистрируем в ОС
             vpnInterface = builder.establish()
             if (vpnInterface == null) {
-                Log.w(TAG, "Builder established a null TUN interface. Falling back to high-fidelity sandboxed tunnel.")
+                Log.e(TAG, "Builder established a null TUN interface.")
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Unable to establish system TUN interface: ${e.message}. Activating high-fidelity sandboxed tunnel.", e)
+            Log.e(TAG, "Unable to establish system TUN interface", e)
+            throw e
         }
     }
 
     private fun closeTunnel() {
+        try {
+            vpnInputStream?.close()
+        } catch (e: Exception){}
+        vpnInputStream = null
+
         try {
             vpnInterface?.close()
         } catch (e: Exception) {
@@ -256,7 +282,11 @@ class MihomoVpnService : VpnService() {
             .build()
 
         try {
-            startForeground(NOTIFICATION_ID, notification)
+            if (Build.VERSION.SDK_INT >= 34) { // Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Fatal failure in startForeground of MihomoVpnService", e)
         }

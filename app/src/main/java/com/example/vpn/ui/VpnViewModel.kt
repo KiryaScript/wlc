@@ -152,13 +152,13 @@ class VpnViewModel(private val repository: VpnRepository) : ViewModel() {
      */
     fun toggleConnection(context: Context) {
         val currentStatus = vpnStatus.value
-        addLog("toggleConnection called. Current status: \$currentStatus")
+        addLog("toggleConnection called. Current status: $currentStatus")
         if (currentStatus == MihomoVpnService.ConnectionStatus.CONNECTED) {
             MihomoVpnService.stopVpn(context)
             addLog("MihomoVpnService.stopVpn called")
         } else if (currentStatus == MihomoVpnService.ConnectionStatus.DISCONNECTED) {
             val vpnIntent = android.net.VpnService.prepare(context)
-            addLog("ViewModel prepare() returned: \${if(vpnIntent != null) \"INTENT\" else \"NULL\"}")
+            addLog("ViewModel prepare() returned: ${if(vpnIntent != null) "INTENT" else "NULL"}")
             if (vpnIntent != null) {
                 val requestPermission = onRequestVpnPermission
                 if (requestPermission != null) {
@@ -306,21 +306,9 @@ class VpnViewModel(private val repository: VpnRepository) : ViewModel() {
             _isFetchingSub.value = true
             addLog("[FETCH] Обновление подписки `${profile.name}`...")
 
-            val parsedProxies = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 try {
-                    val request = Request.Builder()
-                        .url(url)
-                        .header("User-Agent", "ClashMeta; FlClash; Mihomo")
-                        .build()
-
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val body = response.body?.string() ?: ""
-                            VpnUriParser.parseSubscription(body)
-                        } else {
-                            null
-                        }
-                    }
+                    com.example.vpn.core.SubscriptionParser.fetchAndParse(url)
                 } catch (e: Exception) {
                     e.printStackTrace()
                     null
@@ -328,10 +316,13 @@ class VpnViewModel(private val repository: VpnRepository) : ViewModel() {
             }
 
             _isFetchingSub.value = false
-            if (parsedProxies != null) {
-                repository.updateProfileProxies(profile.id, parsedProxies)
-                addLog("[SUCCESS] Подписка `${profile.name}` успешно обновлена! Новых серверов: ${parsedProxies.size}")
-                Toast.makeText(context, "Подписка обновлена. Найдено серверов: ${parsedProxies.size}", Toast.LENGTH_SHORT).show()
+            if (result != null) {
+                repository.updateProfileProxies(profile.id, result.proxies)
+                if (result.rules != null) {
+                    addLog("[SUCCESS] Загружены правила: yes")
+                }
+                addLog("[SUCCESS] Подписка `${profile.name}` успешно обновлена! Новых серверов: ${result.proxies.size}")
+                Toast.makeText(context, "Подписка обновлена. Найдено серверов: ${result.proxies.size}", Toast.LENGTH_SHORT).show()
                 measureAllPings()
             } else {
                 addLog("[FAILED] Не удалось обновить подписку `${profile.name}`. Сетевая ошибка.")

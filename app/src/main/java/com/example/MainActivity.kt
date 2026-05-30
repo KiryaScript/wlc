@@ -86,7 +86,7 @@ class MainActivity : ComponentActivity() {
     fun toggleConnectionWithChecks() {
         try {
             val vpnIntent = VpnService.prepare(this)
-            viewModel.addLog("toggleConnectionWithChecks called. prepare() returned: \${if (vpnIntent != null) \"INTENT\" else \"NULL\"}")
+            viewModel.addLog("toggleConnectionWithChecks called. prepare() returned: ${if (vpnIntent != null) "INTENT" else "NULL"}")
             
             if (vpnIntent != null) {
                 // Запрашиваем согласие пользователя через системное окно Android
@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
                 viewModel.toggleConnection(this)
             }
         } catch (e: Exception) {
-            viewModel.addLog("EXCEPTION in toggleConnectionWithChecks: \${e.message}")
+            viewModel.addLog("EXCEPTION in toggleConnectionWithChecks: ${e.message}")
             e.printStackTrace()
         }
     }
