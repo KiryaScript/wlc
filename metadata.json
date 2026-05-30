@@ -1,0 +1,6 @@
+{
+  "name": "Mihomo VPN",
+  "description": "Полноценный VPN-клиент на базе единого ядра Mihomo (Clash.Meta) с поддержкой VLESS, Hysteria 2, WireGuard и Shadowsocks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
