@@ -249,8 +249,10 @@ fun DashboardTab(
                 }
                 val mainActivity = currentContext as? com.example.MainActivity
                 if (mainActivity != null) {
+                    viewModel.addLog("Context unwrapped to MainActivity successfully.")
                     mainActivity.toggleConnectionWithChecks()
                 } else {
+                    viewModel.addLog("ERROR: Context could not be unwrapped to MainActivity, falling back!")
                     viewModel.toggleConnection(context)
                 }
             }

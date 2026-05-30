@@ -48,10 +48,10 @@ class MihomoVpnService : VpnService() {
                 action = ACTION_CONNECT
                 putExtra(EXTRA_CONFIG, configContent)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                androidx.core.content.ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start VPN service", e)
             }
         }
 
@@ -256,20 +256,7 @@ class MihomoVpnService : VpnService() {
             .build()
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                try {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                    )
-                } catch (e: SecurityException) {
-                    Log.e(TAG, "Failed starting foreground under specialUse, falling back", e)
-                    startForeground(NOTIFICATION_ID, notification)
-                }
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
+            startForeground(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
             Log.e(TAG, "Fatal failure in startForeground of MihomoVpnService", e)
         }

@@ -152,20 +152,26 @@ class VpnViewModel(private val repository: VpnRepository) : ViewModel() {
      */
     fun toggleConnection(context: Context) {
         val currentStatus = vpnStatus.value
+        addLog("toggleConnection called. Current status: \$currentStatus")
         if (currentStatus == MihomoVpnService.ConnectionStatus.CONNECTED) {
             MihomoVpnService.stopVpn(context)
+            addLog("MihomoVpnService.stopVpn called")
         } else if (currentStatus == MihomoVpnService.ConnectionStatus.DISCONNECTED) {
             val vpnIntent = android.net.VpnService.prepare(context)
+            addLog("ViewModel prepare() returned: \${if(vpnIntent != null) \"INTENT\" else \"NULL\"}")
             if (vpnIntent != null) {
                 val requestPermission = onRequestVpnPermission
                 if (requestPermission != null) {
+                    addLog("calling requestPermission")
                     requestPermission(vpnIntent)
                 } else {
+                    addLog("requestPermission is NULL. Proceeding to direct launch fallback")
                     // Fallback to direct launch if no callback registered
                     val configContent = repository.getActiveConfigContent(dnsServer.value)
                     MihomoVpnService.startVpn(context, configContent)
                 }
             } else {
+                addLog("Starting VPN directly because prepare returned null")
                 val configContent = repository.getActiveConfigContent(dnsServer.value)
                 MihomoVpnService.startVpn(context, configContent)
             }

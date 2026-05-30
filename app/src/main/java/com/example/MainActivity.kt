@@ -84,13 +84,21 @@ class MainActivity : ComponentActivity() {
      * Он вызывается перед запуском системного туннеля для подтверждения безопасности
      */
     fun toggleConnectionWithChecks() {
-        val vpnIntent = VpnService.prepare(this)
-        if (vpnIntent != null) {
-            // Запрашиваем согласие пользователя через системное окно Android
-            vpnPermissionLauncher.launch(vpnIntent)
-        } else {
-            // Разрешения уже получены, запускаем сервис
-            viewModel.toggleConnection(this)
+        try {
+            val vpnIntent = VpnService.prepare(this)
+            viewModel.addLog("toggleConnectionWithChecks called. prepare() returned: \${if (vpnIntent != null) \"INTENT\" else \"NULL\"}")
+            
+            if (vpnIntent != null) {
+                // Запрашиваем согласие пользователя через системное окно Android
+                vpnPermissionLauncher.launch(vpnIntent)
+                viewModel.addLog("vpnPermissionLauncher.launch() executed")
+            } else {
+                // Разрешения уже получены, запускаем сервис
+                viewModel.toggleConnection(this)
+            }
+        } catch (e: Exception) {
+            viewModel.addLog("EXCEPTION in toggleConnectionWithChecks: \${e.message}")
+            e.printStackTrace()
         }
     }
 }
